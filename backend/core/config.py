@@ -1,6 +1,7 @@
 import os
 import json
 from pathlib import Path
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from typing import Dict, Set
 
@@ -15,7 +16,10 @@ class Settings(BaseSettings):
 
     # 并发配置（浏览器仅用于账号注册，不用于对话请求）
     BROWSER_POOL_SIZE: int = int(os.getenv("BROWSER_POOL_SIZE", 1))
-    MAX_INFLIGHT_PER_ACCOUNT: int = int(os.getenv("MAX_INFLIGHT", 2))
+    MAX_INFLIGHT_PER_ACCOUNT: int = Field(
+        default=2,
+        validation_alias=AliasChoices("MAX_INFLIGHT_PER_ACCOUNT", "MAX_INFLIGHT"),
+    )
     BROWSER_STREAM_TIMEOUT_SECONDS: int = int(os.getenv("BROWSER_STREAM_TIMEOUT_SECONDS", 1800))
 
     # 容灾与限流
@@ -56,6 +60,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 API_KEYS_FILE = DATA_DIR / "api_keys.json"
 

@@ -392,8 +392,20 @@ class QwenClient:
         files: list[dict] | None = None,
         chat_type: str = "t2t",
         image_options: dict | None = None,
+        thinking_enabled: bool | None = None,
+        enable_search: bool = False,
     ) -> dict:
-        return build_chat_payload(chat_id, model, content, has_custom_tools, files=files, chat_type=chat_type, image_options=image_options)
+        return build_chat_payload(
+            chat_id,
+            model,
+            content,
+            has_custom_tools,
+            files=files,
+            chat_type=chat_type,
+            image_options=image_options,
+            thinking_enabled=thinking_enabled,
+            enable_search=enable_search,
+        )
 
     def parse_sse_chunk(self, chunk: str) -> list[dict]:
         return parse_sse_chunk(chunk)
@@ -408,8 +420,21 @@ class QwenClient:
         files: list[dict] | None = None,
         chat_type: str = "t2t",
         image_options: dict | None = None,
+        thinking_enabled: bool | None = None,
+        enable_search: bool = False,
     ):
-        async for event in self.executor.stream(token, chat_id, model, content, has_custom_tools, files=files, chat_type=chat_type, image_options=image_options):
+        async for event in self.executor.stream(
+            token,
+            chat_id,
+            model,
+            content,
+            has_custom_tools,
+            files=files,
+            chat_type=chat_type,
+            image_options=image_options,
+            thinking_enabled=thinking_enabled,
+            enable_search=enable_search,
+        ):
             yield event
 
     async def stream_chat_once(self, token: str, chat_id: str, payload: dict) -> AsyncIterator[dict]:
@@ -441,6 +466,8 @@ class QwenClient:
         use_prewarmed: bool = True,
         chat_type: str = "t2t",
         image_options: dict | None = None,
+        thinking_enabled: bool | None = None,
+        enable_search: bool = False,
     ):
         async for item in self.executor.chat_stream_events_with_retry(
             model,
@@ -453,5 +480,7 @@ class QwenClient:
             use_prewarmed=use_prewarmed,
             chat_type=chat_type,
             image_options=image_options,
+            thinking_enabled=thinking_enabled,
+            enable_search=enable_search,
         ):
             yield item

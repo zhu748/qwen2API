@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.adapter.standard_request import StandardRequest, CLAUDE_CODE_OPENAI_PROFILE
 from backend.core.config import resolve_model
+from backend.services.model_modes import parse_model_mode
 from backend.services.prompt_builder import messages_to_prompt
 from backend.services.workspace_context import derive_workspace_root
 from backend.toolcall.normalize import build_tool_name_registry
@@ -33,6 +34,7 @@ class CLIProxy:
             StandardRequest: 统一的标准请求对象
         """
         model_name = req_data.get("model", "gpt-4o")
+        model_mode = parse_model_mode(model_name)
         workspace_root = derive_workspace_root(req_data)
         req_data = {**req_data, "_workspace_root": workspace_root}
         prompt_result = messages_to_prompt(req_data, client_profile=client_profile)
@@ -47,7 +49,7 @@ class CLIProxy:
         return StandardRequest(
             prompt=prompt_result.prompt,
             response_model=model_name,
-            resolved_model=resolve_model(model_name),
+            resolved_model=resolve_model(model_mode.base_model),
             surface="openai",
             client_profile=client_profile,
             requested_model=model_name,
@@ -56,6 +58,12 @@ class CLIProxy:
             tool_names=tool_names,
             tool_name_registry=build_tool_name_registry(tool_names),
             tool_enabled=prompt_result.tool_enabled,
+            chat_type=model_mode.chat_type,
+            thinking_enabled=True if model_mode.force_thinking else None,
+            force_thinking=model_mode.force_thinking,
+            enable_search=model_mode.chat_type == "deep_research",
+            model_mode=model_mode.mode,
+            skip_prewarmed_chat_ids=model_mode.chat_type != "t2t",
             workspace_root=workspace_root,
         )
 
@@ -72,6 +80,7 @@ class CLIProxy:
             StandardRequest: 统一的标准请求对象
         """
         model_name = req_data.get("model", "claude-3-5-sonnet")
+        model_mode = parse_model_mode(model_name)
         workspace_root = derive_workspace_root(req_data)
         req_data = {**req_data, "_workspace_root": workspace_root}
         prompt_result = messages_to_prompt(req_data, client_profile=client_profile)
@@ -86,7 +95,7 @@ class CLIProxy:
         return StandardRequest(
             prompt=prompt_result.prompt,
             response_model=model_name,
-            resolved_model=resolve_model(model_name),
+            resolved_model=resolve_model(model_mode.base_model),
             surface="anthropic",
             client_profile=client_profile,
             requested_model=model_name,
@@ -95,6 +104,12 @@ class CLIProxy:
             tool_names=tool_names,
             tool_name_registry=build_tool_name_registry(tool_names),
             tool_enabled=prompt_result.tool_enabled,
+            chat_type=model_mode.chat_type,
+            thinking_enabled=True if model_mode.force_thinking else None,
+            force_thinking=model_mode.force_thinking,
+            enable_search=model_mode.chat_type == "deep_research",
+            model_mode=model_mode.mode,
+            skip_prewarmed_chat_ids=model_mode.chat_type != "t2t",
             workspace_root=workspace_root,
         )
 
@@ -111,6 +126,7 @@ class CLIProxy:
         Returns:
             StandardRequest: 统一的标准请求对象
         """
+        model_mode = parse_model_mode(model)
         prompt = CLIProxy._extract_gemini_prompt(req_data)
         stream_requested = CLIProxy._is_gemini_stream_request(req_data) if stream is None else stream
 
@@ -121,7 +137,7 @@ class CLIProxy:
         return StandardRequest(
             prompt=prompt,
             response_model=model,
-            resolved_model=resolve_model(model),
+            resolved_model=resolve_model(model_mode.base_model),
             surface="gemini",
             requested_model=model,
             content=prompt,
@@ -130,6 +146,12 @@ class CLIProxy:
             tool_names=tool_names,
             tool_name_registry={},
             tool_enabled=False,
+            chat_type=model_mode.chat_type,
+            thinking_enabled=True if model_mode.force_thinking else None,
+            force_thinking=model_mode.force_thinking,
+            enable_search=model_mode.chat_type == "deep_research",
+            model_mode=model_mode.mode,
+            skip_prewarmed_chat_ids=model_mode.chat_type != "t2t",
         )
 
     @staticmethod

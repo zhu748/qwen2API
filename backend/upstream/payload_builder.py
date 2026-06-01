@@ -17,7 +17,21 @@ CUSTOM_TOOL_COMPAT_FEATURE_CONFIG = {
 CUSTOM_TOOL_LOW_LATENCY_OVERRIDES = {
     "thinking_enabled": False,
     "auto_thinking": False,
+    "thinking_mode": "Disabled",
 }
+
+IMAGE_CHAT_TYPES = {"image_gen", "t2i"}
+VIDEO_CHAT_TYPES = {"t2v"}
+
+
+def _apply_thinking_config(feature_config: dict, enabled: bool) -> None:
+    feature_config.update(
+        {
+            "thinking_enabled": enabled,
+            "auto_thinking": enabled,
+            "thinking_mode": "Auto" if enabled else "Disabled",
+        }
+    )
 
 
 def build_chat_payload(
@@ -28,9 +42,12 @@ def build_chat_payload(
     files: list[dict] | None = None,
     chat_type: str = "t2t",
     image_options: dict | None = None,
+    thinking_enabled: bool | None = None,
+    enable_search: bool = False,
 ) -> dict:
     ts = int(time.time())
-    is_image_gen = chat_type == "image_gen"
+    is_image_gen = chat_type in IMAGE_CHAT_TYPES
+    is_video_gen = chat_type in VIDEO_CHAT_TYPES
     image_options = image_options or {}
     feature_config = {
         **CUSTOM_TOOL_COMPAT_FEATURE_CONFIG,
@@ -44,10 +61,15 @@ def build_chat_payload(
         "enable_tools": False,
         "enable_function_call": False,
         "tool_choice": "none",
+        "auto_search": bool(enable_search or chat_type == "deep_research"),
         "plugins_enabled": is_image_gen,
         "image_gen": is_image_gen,
         "image_generation": is_image_gen,
     }
+    if thinking_enabled is not None:
+        _apply_thinking_config(feature_config, bool(thinking_enabled))
+    if is_image_gen or is_video_gen:
+        _apply_thinking_config(feature_config, False)
     if is_image_gen:
         feature_config.update(
             {

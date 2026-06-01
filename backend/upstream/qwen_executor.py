@@ -119,6 +119,8 @@ class QwenExecutor:
         files: list[dict] | None = None,
         chat_type: str = "t2t",
         image_options: dict | None = None,
+        thinking_enabled: bool | None = None,
+        enable_search: bool = False,
     ):
         stream_fn = getattr(self.engine, "stream_chat_once", None) or getattr(self.engine, "fetch_chat", None)
         if stream_fn is None:
@@ -132,6 +134,8 @@ class QwenExecutor:
             files=files,
             chat_type=chat_type,
             image_options=image_options,
+            thinking_enabled=thinking_enabled,
+            enable_search=enable_search,
         )
         buffer = ""
         started_at = time.perf_counter()
@@ -144,7 +148,7 @@ class QwenExecutor:
         feature_config = payload.get("messages", [{}])[0].get("feature_config", {})
         prompt_len = len(content)
         log.info(f"[上游] 开始流式 会话={chat_id} 模型={model} 自定义工具={has_custom_tools} prompt长度={prompt_len} ({prompt_len/1024:.1f}KB)")
-        log.info(f"[上游] 功能配置: function_calling={feature_config.get('function_calling')} auto_search={feature_config.get('auto_search')} code_interpreter={feature_config.get('code_interpreter')} plugins_enabled={feature_config.get('plugins_enabled')} image_size={feature_config.get('image_size')} image_ratio={feature_config.get('image_ratio')}")
+        log.info(f"[上游] 功能配置: thinking_enabled={feature_config.get('thinking_enabled')} auto_thinking={feature_config.get('auto_thinking')} thinking_mode={feature_config.get('thinking_mode')} function_calling={feature_config.get('function_calling')} auto_search={feature_config.get('auto_search')} code_interpreter={feature_config.get('code_interpreter')} plugins_enabled={feature_config.get('plugins_enabled')} image_size={feature_config.get('image_size')} image_ratio={feature_config.get('image_ratio')}")
 
         prompt_content = payload.get("messages", [{}])[0].get("content", "")
         if has_custom_tools:
@@ -229,6 +233,8 @@ class QwenExecutor:
         use_prewarmed: bool = True,
         chat_type: str = "t2t",
         image_options: dict | None = None,
+        thinking_enabled: bool | None = None,
+        enable_search: bool = False,
     ):
         exclude = set()
         if fixed_account is not None:
@@ -248,7 +254,18 @@ class QwenExecutor:
                 try:
                     meta_yielded = True
                     yield {"type": "meta", "chat_id": chat_id, "acc": acc}
-                    async for evt in self.stream(acc.token, chat_id, model, content, has_custom_tools, files=files, chat_type=chat_type, image_options=image_options):
+                    async for evt in self.stream(
+                        acc.token,
+                        chat_id,
+                        model,
+                        content,
+                        has_custom_tools,
+                        files=files,
+                        chat_type=chat_type,
+                        image_options=image_options,
+                        thinking_enabled=thinking_enabled,
+                        enable_search=enable_search,
+                    ):
                         yield {"type": "event", "event": evt}
                 finally:
                     self._active_chat_ids.discard(chat_id)
@@ -282,7 +299,18 @@ class QwenExecutor:
                     meta_yielded = True
                     yield {"type": "meta", "chat_id": chat_id, "acc": acc}
 
-                    async for evt in self.stream(acc.token, chat_id, model, content, has_custom_tools, files=files, chat_type=chat_type, image_options=image_options):
+                    async for evt in self.stream(
+                        acc.token,
+                        chat_id,
+                        model,
+                        content,
+                        has_custom_tools,
+                        files=files,
+                        chat_type=chat_type,
+                        image_options=image_options,
+                        thinking_enabled=thinking_enabled,
+                        enable_search=enable_search,
+                    ):
                         yield {"type": "event", "event": evt}
                 finally:
                     self._active_chat_ids.discard(chat_id)

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "../components/ui/button"
-import { Send, RefreshCw, Bot } from "lucide-react"
+import { Send, RefreshCw, Bot, Brain, Zap } from "lucide-react"
 import { getAuthHeader } from "../lib/auth"
 import { API_BASE } from "../lib/api"
 import { toast } from "sonner"
@@ -46,8 +46,89 @@ function MessageContent({ content }: { content: string }) {
 }
 
 type ChatMessage = { role: string; content: string; reasoning?: string; error?: boolean }
+type ModelCapability = {
+  thinking?: boolean
+  search?: boolean
+  vision?: boolean
+  deep_research?: boolean
+  image_gen?: boolean
+  video_gen?: boolean
+  web_dev?: boolean
+  slides?: boolean
+}
+type ModelOption = {
+  id: string
+  base_model?: string
+  family?: string
+  mode?: string
+  display_name?: string
+  capabilities?: ModelCapability
+}
+
 const TYPEWRITER_CHUNK_SIZE = 2
 const TYPEWRITER_DELAY_MS = 24
+const FALLBACK_MODELS: ModelOption[] = [{ id: "qwen3.6-plus", base_model: "qwen3.6-plus", family: "qwen3.6", mode: "chat", capabilities: {} }]
+const MODEL_MODE_SUFFIX_RE = /-(thinking|deep-research|deep_research|image|video|webdev|web-dev|slides|t2i|t2v)$/i
+const CAPABILITY_LABELS: Array<{ key: keyof ModelCapability; label: string }> = [
+  { key: "thinking", label: "思考" },
+  { key: "search", label: "搜索" },
+  { key: "vision", label: "视觉" },
+  { key: "deep_research", label: "研究" },
+  { key: "image_gen", label: "图片" },
+  { key: "video_gen", label: "视频" },
+  { key: "web_dev", label: "建站" },
+  { key: "slides", label: "PPT" },
+]
+
+function normalizeModelOption(value: unknown): ModelOption | null {
+  if (typeof value === "string" && value) return { id: value, capabilities: {} }
+  const record = asRecord(value)
+  const id = asText(record.id)
+  if (!id) return null
+  return {
+    id,
+    base_model: asText(record.base_model) || undefined,
+    family: asText(record.family) || undefined,
+    mode: asText(record.mode) || undefined,
+    display_name: asText(record.display_name) || undefined,
+    capabilities: asRecord(record.capabilities) as ModelCapability,
+  }
+}
+
+function isBaseModelOption(option: ModelOption): boolean {
+  return option.base_model ? option.id === option.base_model : !MODEL_MODE_SUFFIX_RE.test(option.id)
+}
+
+function isThinkingVariant(modelId: string): boolean {
+  return /-thinking$/i.test(modelId)
+}
+
+function capabilityBadges(option?: ModelOption): string[] {
+  if (!option?.capabilities) return []
+  return CAPABILITY_LABELS.filter(item => option.capabilities?.[item.key]).map(item => item.label)
+}
+
+function formatModelOption(option: ModelOption): string {
+  const badges = capabilityBadges(option)
+  return badges.length ? `${option.id} · ${badges.join(" ")}` : option.id
+}
+
+function chooseDefaultModel(options: ModelOption[], currentModel?: string): string {
+  if (currentModel && options.some(option => option.id === currentModel)) return currentModel
+  const preferred = options.find(option => option.id === "qwen3.6-plus")
+  if (preferred) return preferred.id
+  const base = options.find(isBaseModelOption)
+  return base?.id || options[0]?.id || "qwen3.6-plus"
+}
+
+function groupModelOptions(options: ModelOption[]): Array<[string, ModelOption[]]> {
+  const groups = new Map<string, ModelOption[]>()
+  options.forEach(option => {
+    const family = option.family || option.base_model || "Qwen"
+    groups.set(family, [...(groups.get(family) || []), option])
+  })
+  return Array.from(groups.entries())
+}
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value : ""
@@ -158,9 +239,15 @@ export default function TestPage() {
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [model, setModel] = useState("qwen3.6-plus")
-  const [availableModels, setAvailableModels] = useState<string[]>(["qwen3.6-plus"])
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(FALLBACK_MODELS)
   const [stream, setStream] = useState(true)
+  const [answerMode, setAnswerMode] = useState<"thinking" | "fast">("thinking")
   const bottomRef = useRef<HTMLDivElement>(null)
+  const selectedModel = availableModels.find(option => option.id === model)
+  const selectedBadges = capabilityBadges(selectedModel)
+  const groupedModels = groupModelOptions(availableModels)
+  const selectedSupportsThinking = selectedModel?.capabilities?.thinking
+  const selectedForcesThinking = isThinkingVariant(model)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -173,18 +260,17 @@ export default function TestPage() {
         const r = await fetch(`${API_BASE}/v1/models`, { headers: getAuthHeader() })
         if (!r.ok) return
         const j = await r.json()
-        const ids = (j?.data || [])
-          .map((m: { id?: string }) => m?.id)
-          .filter((id: unknown): id is string => typeof id === "string" && !!id)
-        if (ids.length) {
-          setAvailableModels(ids)
-          if (!ids.includes(model)) setModel(ids[0])
+        const options = (j?.data || [])
+          .map(normalizeModelOption)
+          .filter((item: ModelOption | null): item is ModelOption => Boolean(item?.id))
+        if (options.length) {
+          setAvailableModels(options)
+          setModel(current => chooseDefaultModel(options, current))
         }
       } catch {
         // keep fallback list
       }
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const appendAssistantDelta = (content: string, reasoning: string) => {
@@ -222,6 +308,17 @@ export default function TestPage() {
   const handleSend = async () => {
     if (!input.trim() || loading) return
     const userMsg = { role: "user", content: input }
+    const wantsThinking = answerMode === "thinking"
+    const requestBody = {
+      model,
+      messages: [...messages, userMsg],
+      stream,
+      include_reasoning: wantsThinking,
+      enable_thinking: wantsThinking,
+    }
+    if (!wantsThinking && selectedForcesThinking) {
+      toast.info("该模型为强制思考变体，快速模式不会生效")
+    }
     setMessages(prev => [...prev, userMsg])
     setInput("")
     setLoading(true)
@@ -231,7 +328,7 @@ export default function TestPage() {
         const res = await fetch(`${API_BASE}/v1/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeader() },
-          body: JSON.stringify({ model, messages: [...messages, userMsg], stream: false, include_reasoning: true })
+          body: JSON.stringify({ ...requestBody, stream: false })
         })
         const data = await res.json()
         if (data.error) {
@@ -245,7 +342,7 @@ export default function TestPage() {
         const res = await fetch(`${API_BASE}/v1/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeader() },
-          body: JSON.stringify({ model, messages: [...messages, userMsg], stream: true, include_reasoning: true })
+          body: JSON.stringify({ ...requestBody, stream: true })
         })
 
         if (!res.ok) {
@@ -400,31 +497,84 @@ export default function TestPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-10rem)] space-y-4 max-w-5xl mx-auto">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col gap-4 rounded-2xl border bg-card/80 p-4 shadow-sm backdrop-blur md:flex-row md:items-start md:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">接口测试</h2>
-          <p className="text-muted-foreground">在此测试您的 API 分发是否正常工作。</p>
+          <p className="text-muted-foreground">在此测试 API 分发、模型变体与思考模式是否正常工作。</p>
         </div>
-        <div className="flex gap-4 items-center">
-          <div className="flex items-center gap-2 text-sm bg-card border px-3 py-1.5 rounded-md">
-            <span className="font-medium text-muted-foreground">模型:</span>
-            <select value={model} onChange={e => setModel(e.target.value)} className="bg-transparent font-mono outline-none">
-              {availableModels.map(id => (
-                <option key={id} value={id}>{id}</option>
-              ))}
-            </select>
+        <div className="flex flex-col gap-3 md:items-end">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 rounded-xl border bg-background/70 px-3 py-2">
+              <span className="font-medium text-muted-foreground">模型</span>
+              <select value={model} onChange={e => setModel(e.target.value)} className="max-w-[19rem] bg-transparent font-mono outline-none">
+                {groupedModels.map(([family, options]) => (
+                  <optgroup key={family} label={family}>
+                    {options.map(option => (
+                      <option key={option.id} value={option.id}>{formatModelOption(option)}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <div
+              className="flex cursor-pointer items-center gap-2 rounded-xl border bg-background/70 px-3 py-2"
+              onClick={() => setStream(!stream)}
+            >
+              <input type="checkbox" checked={stream} onChange={() => {}} className="cursor-pointer" />
+              <span className="font-medium">流式传输</span>
+            </div>
+            <Button variant="outline" onClick={() => { setMessages([]); setInput("") }}>
+              <RefreshCw className="mr-2 h-4 w-4" /> 新建对话
+            </Button>
           </div>
-          <div
-            className="flex items-center gap-2 text-sm bg-card border px-3 py-1.5 rounded-md cursor-pointer"
-            onClick={() => setStream(!stream)}
-          >
-            <input type="checkbox" checked={stream} onChange={() => {}} className="cursor-pointer" />
-            <span className="font-medium">流式传输 (Stream)</span>
+          <div className="flex max-w-2xl flex-wrap justify-start gap-2 md:justify-end">
+            <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs font-mono text-muted-foreground">
+              base: {selectedModel?.base_model || model}
+            </span>
+            <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">
+              mode: {selectedModel?.mode || "chat"}
+            </span>
+            {selectedBadges.length ? selectedBadges.map(label => (
+              <span key={label} className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                {label}
+              </span>
+            )) : (
+              <span className="rounded-full border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground">未声明能力</span>
+            )}
           </div>
-          <Button variant="outline" onClick={() => setMessages([])}>
-            <RefreshCw className="mr-2 h-4 w-4" /> 清空对话
-          </Button>
         </div>
+      </div>
+
+      <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex rounded-xl border bg-background/70 p-1">
+            <button
+              type="button"
+              onClick={() => setAnswerMode("thinking")}
+              className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${answerMode === "thinking" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted"}`}
+            >
+              <Brain className="h-4 w-4" /> 思考
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnswerMode("fast")}
+              className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${answerMode === "fast" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted"}`}
+            >
+              <Zap className="h-4 w-4" /> 快速
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {answerMode === "thinking"
+              ? "思考模式会向后端发送 enable_thinking=true，优先展示 reasoning。"
+              : "快速模式会向后端发送 enable_thinking=false，减少思考阶段等待。"}
+          </p>
+        </div>
+        {!selectedSupportsThinking ? (
+          <p className="mt-2 text-xs text-muted-foreground">当前模型未声明思考能力，后端仍会按请求透传模式字段。</p>
+        ) : null}
+        {selectedForcesThinking && answerMode === "fast" ? (
+          <p className="mt-2 text-xs text-amber-500">该模型为强制思考变体，快速模式不会覆盖后端强制 thinking。</p>
+        ) : null}
       </div>
 
       <div className="flex-1 rounded-xl border bg-card overflow-hidden flex flex-col shadow-sm">

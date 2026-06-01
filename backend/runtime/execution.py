@@ -722,7 +722,7 @@ async def run_runtime_attempt(
     )
     if execution.state.empty_upstream_response:
         request.skip_prewarmed_chat_ids = True
-        if getattr(request, persistent_session, False) and getattr(request, upstream_chat_id, None):
+        if getattr(request, "persistent_session", False) and getattr(request, "upstream_chat_id", None):
             request.session_chat_invalidated = True
             request.upstream_chat_id = None
             request.prompt = request.full_prompt or request.prompt
@@ -929,15 +929,22 @@ async def collect_completion_run(
         )
         return RuntimeExecutionResult(state=state, chat_id=chat_id, acc=acc)
 
+    request_chat_type = getattr(request, "chat_type", "t2t") or "t2t"
+    use_prewarmed_chat = request_chat_type == "t2t" and not bool(getattr(request, "skip_prewarmed_chat_ids", False))
+    existing_chat_id = getattr(request, "upstream_chat_id", None) if request_chat_type == "t2t" else None
+
     async for item in client.chat_stream_events_with_retry(
         request.resolved_model,
         prompt,
         has_custom_tools=bool(request.tools),
         files=getattr(request, "upstream_files", None),
         fixed_account=getattr(request, "bound_account", None),
-        existing_chat_id=getattr(request, "upstream_chat_id", None),
-        delete_on_close=not bool(getattr(request, "persistent_session", False)),
-        use_prewarmed=not bool(getattr(request, "skip_prewarmed_chat_ids", False)),
+        existing_chat_id=existing_chat_id,
+        delete_on_close=(request_chat_type != "t2t") or not bool(getattr(request, "persistent_session", False)),
+        use_prewarmed=use_prewarmed_chat,
+        chat_type=request_chat_type,
+        thinking_enabled=getattr(request, "thinking_enabled", None),
+        enable_search=bool(getattr(request, "enable_search", False)),
     ):
         if item.get("type") == "meta":
             chat_id = item.get("chat_id")
